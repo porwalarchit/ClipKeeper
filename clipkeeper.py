@@ -14,7 +14,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
-    QSystemTrayIcon, QMessageBox, QAbstractItemView,
+    QSystemTrayIcon, QAbstractItemView,
     QDialog, QSpinBox, QFrame,
 )
 from PyQt5.QtCore import (
@@ -580,6 +580,91 @@ class RowWidget(QWidget):
         h.addWidget(btn, alignment=Qt.AlignVCenter)
 
         self.setFixedHeight(ROW_HEIGHT)
+
+
+# ── Confirm Dialog ────────────────────────────────────────────────────────────
+class ConfirmDialog(QDialog):
+    """A themed confirmation dialog that appears centered over its parent."""
+    def __init__(self, title, body, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('ClipKeeper')
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setModal(True)
+        self.setFixedWidth(320)
+        self._accepted = False
+        self._build(title, body)
+        self.setStyleSheet(build_stylesheet(settings.theme, settings.font_size))
+
+    def _build(self, title, body):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Header
+        header = QWidget()
+        header.setObjectName('header')
+        header.setFixedHeight(46)
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(16, 0, 16, 0)
+        lbl = QLabel(title)
+        lbl.setObjectName('title')
+        hl.addWidget(lbl)
+        layout.addWidget(header)
+
+        # Body
+        body_widget = QWidget()
+        body_widget.setObjectName('root')
+        bl = QVBoxLayout(body_widget)
+        bl.setSpacing(16)
+        bl.setContentsMargins(20, 20, 20, 20)
+
+        msg = QLabel(body)
+        msg.setObjectName('settings_label')
+        msg.setWordWrap(True)
+        bl.addWidget(msg)
+
+        sep = QFrame()
+        sep.setObjectName('separator')
+        sep.setFrameShape(QFrame.HLine)
+        bl.addWidget(sep)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.addStretch()
+
+        no_btn = QPushButton('No')
+        no_btn.setObjectName('quit_btn')
+        no_btn.setFixedSize(90, 32)
+        no_btn.setFocusPolicy(Qt.NoFocus)
+        no_btn.setCursor(Qt.PointingHandCursor)
+        no_btn.clicked.connect(self.reject)
+        btn_row.addWidget(no_btn)
+
+        yes_btn = QPushButton('Yes')
+        yes_btn.setObjectName('clear_btn')
+        yes_btn.setFixedSize(90, 32)
+        yes_btn.setFocusPolicy(Qt.NoFocus)
+        yes_btn.setCursor(Qt.PointingHandCursor)
+        yes_btn.clicked.connect(self._on_yes)
+        btn_row.addWidget(yes_btn)
+
+        bl.addLayout(btn_row)
+        layout.addWidget(body_widget)
+
+    def _on_yes(self):
+        self._accepted = True
+        self.accept()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Center over parent window
+        parent = self.parent()
+        if parent:
+            pg = parent.frameGeometry()
+            self.move(
+                pg.x() + (pg.width() - self.width()) // 2,
+                pg.y() + (pg.height() - self.height()) // 2,
+            )
 
 
 # ── Settings Dialog ───────────────────────────────────────────────────────────
@@ -1206,14 +1291,18 @@ class ClipboardManager(QObject):
 
     # ── Actions ───────────────────────────────────────────────────────────────
     def confirm_clear(self):
-        msg = QMessageBox()
-        msg.setWindowTitle('ClipKeeper')
-        msg.setText('Clear all clipboard history?')
-        msg.setInformativeText('This cannot be undone.')
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.setDefaultButton(QMessageBox.No)
-        msg.setStyleSheet(build_stylesheet(settings.theme, settings.font_size))
-        if msg.exec_() == QMessageBox.Yes:
+        if self.window:
+            self.window._modal_open = True
+        dlg = ConfirmDialog(
+            '[ CLEAR ALL ]',
+            'Clear all clipboard history?\nThis cannot be undone.',
+            parent=self.window,
+        )
+        dlg.exec_()
+        if self.window:
+            self.window._modal_open = False
+            self.window._hide_guard_until = time.monotonic() + 0.5
+        if dlg._accepted:
             self.history = []
             self._save()
             if self.window:
