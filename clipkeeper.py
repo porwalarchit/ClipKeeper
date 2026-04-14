@@ -23,7 +23,7 @@ from PyQt5.QtCore import (
     QByteArray, QBuffer, QIODevice,
 )
 from PyQt5.QtGui import (
-    QIcon, QColor, QPixmap, QPainter, QBrush, QCursor, QPen
+    QIcon, QColor, QPixmap, QPainter, QBrush, QCursor, QPen, QPainterPath
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -38,16 +38,28 @@ ACTION_BTN_WIDTH = 32
 # ── Settings ──────────────────────────────────────────────────────────────────
 class Settings:
     DEFAULTS = {
-        'theme':      'dark',
-        'font_size':  10,
-        'max_items':  100,
-        'max_pinned': 10,
-        'panel_width': 560,
+        'theme':         'dark',
+        'font_size':     10,
+        'max_items':     100,
+        'max_pinned':    10,
+        'panel_width':   35,   # percent of screen width  (25–60)
+        'panel_height':  70,   # percent of screen height (50–100)
+        'show_metadata': False,
+        'word_wrap':     False,
     }
 
     def __init__(self):
         self._data = dict(self.DEFAULTS)
         self._load()
+
+    # Valid ranges for numeric settings (used to clamp loaded values)
+    _RANGES = {
+        'panel_width':  (25, 60),
+        'panel_height': (50, 100),
+        'font_size':    (8, 24),
+        'max_items':    (10, 1000),
+        'max_pinned':   (1, 50),
+    }
 
     def _load(self):
         try:
@@ -56,7 +68,15 @@ class Settings:
                     data = json.load(f)
                     for k, v in data.items():
                         if k in self.DEFAULTS:
-                            self._data[k] = type(self.DEFAULTS[k])(v)
+                            default = self.DEFAULTS[k]
+                            if isinstance(default, bool):
+                                self._data[k] = bool(v)
+                            else:
+                                coerced = type(default)(v)
+                                if k in self._RANGES:
+                                    lo, hi = self._RANGES[k]
+                                    coerced = max(lo, min(hi, coerced))
+                                self._data[k] = coerced
         except Exception:
             pass
 
@@ -69,21 +89,28 @@ class Settings:
             print(f'[ClipKeeper] settings save error: {e}', file=sys.stderr)
 
     @property
-    def theme(self):       return self._data['theme']
+    def theme(self):         return self._data['theme']
     @property
-    def font_size(self):   return self._data['font_size']
+    def font_size(self):     return self._data['font_size']
     @property
-    def max_items(self):   return self._data['max_items']
+    def max_items(self):     return self._data['max_items']
     @property
-    def max_pinned(self):  return self._data['max_pinned']
+    def max_pinned(self):    return self._data['max_pinned']
     @property
-    def panel_width(self): return self._data['panel_width']
+    def panel_width(self):   return self._data['panel_width']
+    @property
+    def panel_height(self):  return self._data['panel_height']
+    @property
+    def show_metadata(self): return self._data['show_metadata']
+    @property
+    def word_wrap(self):     return self._data['word_wrap']
 
     def apply(self, **kwargs):
         """Update one or more settings and persist."""
         for k, v in kwargs.items():
             if k in self.DEFAULTS:
-                self._data[k] = type(self.DEFAULTS[k])(v)
+                default = self.DEFAULTS[k]
+                self._data[k] = bool(v) if isinstance(default, bool) else type(default)(v)
         self.save()
 
 
@@ -95,95 +122,97 @@ def build_stylesheet(theme: str, font_size: int) -> str:
     """Return a complete QSS string for the given theme and preview font size."""
     if theme == 'light':
         c = {
-            'bg':            '#f4f6fb',
-            'surface':       '#ebedf8',
-            'surface2':      '#ffffff',
-            'border':        '#d0d4ee',
-            'border2':       '#e0e4f4',
-            'accent':        '#4a6cf7',
-            'accent_hover':  '#3a5ce0',
-            'text':          '#2a2f50',
-            'text_dim':      '#9098c0',
-            'text_muted':    '#b0b8d8',
-            'meta':          '#a0a8c8',
-            'select_bg':     '#dde3ff',
-            'copy_btn_bg':   '#e0e5ff',
-            'copy_btn_bdr':  '#b8c0e8',
-            'pin_gold':      '#c8900a',
-            'pin_gold_lit':  '#d4a820',
-            'pin_bg':        '#fdf3e0',
-            'pin_bdr':       '#e8d090',
-            'pin_bg_act':    '#fae8b0',
-            'clear_color':   '#c04040',
-            'clear_bdr':     '#ecc8c8',
-            'clear_bg_hv':   '#fae8e8',
-            'quit_color':    '#6b7099',
-            'quit_bdr':      '#c8cdea',
-            'quit_bg_hv':    '#ebedf8',
-            'status_bg':     '#ebedf8',
-            'status_color':  '#9098c0',
-            'status_bdr':    '#d0d4ee',
-            'scroll_bg':     '#ebedf8',
-            'scroll_handle': '#c0c8e0',
-            'scroll_hover':  '#4a6cf7',
-            'pinned_bg':     '#f0f2fa',
-            'section_title': '#b07010',
-            'section_meta':  '#9098c0',
-            'idx_color':     '#c0c8e0',
-            'dialog_bg':     '#f4f6fb',
-            'spin_bg':       '#ffffff',
-            'spin_bdr':      '#c8cdea',
-            'spin_up_bg':    '#ebedf8',
-            'sep_color':     '#d0d4ee',
-            'theme_btn_bg':  '#ebedf8',
-            'theme_btn_clr': '#6b7099',
-            'settings_lbl':  '#2a2f50',
+            # Warm parchment base — comfortable, non-glaring
+            'bg':            '#f5f0eb',
+            'surface':       '#ede7e0',
+            'surface2':      '#f0ebe4',
+            'border':        '#d6cec5',
+            'border2':       '#ddd8d0',
+            'accent':        '#4169e1',
+            'accent_hover':  '#2952cc',
+            'text':          '#1a1a1a',
+            'text_dim':      '#9b9188',
+            'text_muted':    '#b8b0a7',
+            'meta':          '#a09890',
+            'select_bg':     '#d8e1fc',
+            'copy_btn_bg':   '#ede7e0',
+            'copy_btn_bdr':  '#c8c0b5',
+            'pin_gold':      '#9a6e0a',
+            'pin_gold_lit':  '#c08815',
+            'pin_bg':        '#f7eddc',
+            'pin_bdr':       '#e0d0a0',
+            'pin_bg_act':    '#f0e0b5',
+            'clear_color':   '#c0392b',
+            'clear_bdr':     '#e8c5c0',
+            'clear_bg_hv':   '#f8e8e6',
+            'quit_color':    '#706860',
+            'quit_bdr':      '#c8c0b5',
+            'quit_bg_hv':    '#ede7e0',
+            'status_bg':     '#ede7e0',
+            'status_color':  '#9b9188',
+            'status_bdr':    '#d6cec5',
+            'scroll_bg':     '#ede7e0',
+            'scroll_handle': '#c0b8ad',
+            'scroll_hover':  '#4169e1',
+            'pinned_bg':     '#eee8e0',
+            'section_title': '#8a5c08',
+            'section_meta':  '#9b9188',
+            'idx_color':     '#c8c0b5',
+            'dialog_bg':     '#f5f0eb',
+            'spin_bg':       '#f0ebe4',
+            'spin_bdr':      '#c8c0b5',
+            'spin_up_bg':    '#e5dfd8',
+            'sep_color':     '#d6cec5',
+            'theme_btn_bg':  '#ede7e0',
+            'theme_btn_clr': '#706860',
+            'settings_lbl':  '#1a1a1a',
         }
     else:  # dark
         c = {
-            'bg':            '#0d0f18',
-            'surface':       '#12141f',
-            'surface2':      '#14172a',
-            'border':        '#1e2135',
-            'border2':       '#181a28',
-            'accent':        '#6b8cff',
-            'accent_hover':  '#8ca8ff',
-            'text':          '#a8b0d8',
-            'text_dim':      '#3a3f5c',
-            'text_muted':    '#4f5677',
-            'meta':          '#2e3352',
-            'select_bg':     '#161a30',
-            'copy_btn_bg':   '#161a30',
-            'copy_btn_bdr':  '#252a4a',
+            # Near-black base — high contrast, industry standard
+            'bg':            '#111111',
+            'surface':       '#1a1a1a',
+            'surface2':      '#222222',
+            'border':        '#2d2d2d',
+            'border2':       '#1a1a1a',
+            'accent':        '#60a5fa',
+            'accent_hover':  '#93c5fd',
+            'text':          '#e5e5e5',
+            'text_dim':      '#525252',
+            'text_muted':    '#404040',
+            'meta':          '#525252',
+            'select_bg':     '#1d3148',
+            'copy_btn_bg':   '#1a1a1a',
+            'copy_btn_bdr':  '#2d2d2d',
             'pin_gold':      '#e3b341',
             'pin_gold_lit':  '#ffd76b',
             'pin_bg':        'transparent',
             'pin_bdr':       '#3a321a',
-            'pin_bg_act':    '#2a2414',
-            'clear_color':   '#c04040',
-            'clear_bdr':     '#2a1a1a',
-            'clear_bg_hv':   '#2a1a1a',
-            'quit_color':    '#7f879f',
-            'quit_bdr':      '#24283d',
-            'quit_bg_hv':    '#161a30',
-            'status_bg':     '#090b12',
-            'status_color':  '#2a2f45',
-            'status_bdr':    '#12141f',
-            'scroll_bg':     '#0d0f18',
-            'scroll_handle': '#1e2135',
-            'scroll_hover':  '#6b8cff',
-            'pinned_bg':     '#0b0d15',
+            'pin_bg_act':    '#2a2010',
+            'clear_color':   '#f87171',
+            'clear_bdr':     '#3d2020',
+            'clear_bg_hv':   '#2a1414',
+            'quit_color':    '#737373',
+            'quit_bdr':      '#2d2d2d',
+            'quit_bg_hv':    '#1a1a1a',
+            'status_bg':     '#0a0a0a',
+            'status_color':  '#4d4d4d',
+            'status_bdr':    '#1a1a1a',
+            'scroll_bg':     '#111111',
+            'scroll_handle': '#2d2d2d',
+            'scroll_hover':  '#60a5fa',
+            'pinned_bg':     '#0d0d0d',
             'section_title': '#e3b341',
-            'section_meta':  '#4f5677',
-            'idx_color':     '#252a40',
-            'dialog_bg':     '#0d0f18',
-            'spin_bg':       '#12141f',
-            'spin_bdr':      '#1e2135',
-            'spin_up_bg':    '#1e2135',
-            'sep_color':     '#1e2135',
-            'theme_btn_bg':  '#161a30',
-            'theme_btn_clr': '#7f879f',
-            'settings_lbl':  '#a8b0d8',
+            'section_meta':  '#525252',
+            'idx_color':     '#2d2d2d',
+            'dialog_bg':     '#111111',
+            'spin_bg':       '#1a1a1a',
+            'spin_bdr':      '#2d2d2d',
+            'spin_up_bg':    '#2d2d2d',
+            'sep_color':     '#2d2d2d',
+            'theme_btn_bg':  '#1a1a1a',
+            'theme_btn_clr': '#737373',
+            'settings_lbl':  '#e5e5e5',
         }
 
     return f"""
@@ -465,18 +494,20 @@ QPushButton#primary_btn:hover {{
 
 # ── Tray icon generator ───────────────────────────────────────────────────────
 def make_tray_icon():
+    accent = '#60a5fa' if settings.theme == 'dark' else '#4169e1'
+    bg     = '#111111' if settings.theme == 'dark' else '#f5f0eb'
     px = QPixmap(22, 22)
     px.fill(Qt.transparent)
     p = QPainter(px)
     p.setRenderHint(QPainter.Antialiasing)
-    p.setBrush(QBrush(QColor('#6b8cff')))
+    p.setBrush(QBrush(QColor(accent)))
     p.setPen(Qt.NoPen)
     p.drawRoundedRect(3, 5, 16, 15, 2, 2)
-    p.setBrush(QBrush(QColor('#0d0f18')))
+    p.setBrush(QBrush(QColor(bg)))
     p.drawRoundedRect(7, 3, 8, 5, 2, 2)
-    p.setBrush(QBrush(QColor('#6b8cff')))
+    p.setBrush(QBrush(QColor(accent)))
     p.drawRect(8, 4, 6, 3)
-    p.setBrush(QBrush(QColor('#0d0f18')))
+    p.setBrush(QBrush(QColor(bg)))
     p.drawRect(6, 10, 10, 2)
     p.drawRect(6, 14, 10, 2)
     p.end()
@@ -484,31 +515,41 @@ def make_tray_icon():
 
 
 def make_pin_button_icon(pinned=False):
+    import math
     px = QPixmap(16, 16)
     px.fill(Qt.transparent)
     p = QPainter(px)
     p.setRenderHint(QPainter.Antialiasing)
     color = QColor('#ffd76b' if pinned else '#e3b341')
-    p.setPen(color)
-    p.setBrush(color if pinned else Qt.NoBrush)
-    points = [
-        QPoint(3, 2), QPoint(12, 5), QPoint(10, 8),
-        QPoint(12, 12), QPoint(9, 13), QPoint(7, 9),
-        QPoint(4, 11), QPoint(3, 8), QPoint(6, 6),
-    ]
-    p.drawPolygon(*points)
-    if pinned:
-        p.drawLine(2, 13, 13, 2)
+    p.setPen(QPen(color, 1.0))
+    p.setBrush(QBrush(color) if pinned else Qt.NoBrush)
+
+    cx, cy = 8.0, 7.5
+    R, r = 6.5, 2.7
+    path = QPainterPath()
+    for i in range(5):
+        outer_a = math.radians(-90 + i * 72)
+        inner_a = math.radians(-90 + 36 + i * 72)
+        ox, oy = cx + R * math.cos(outer_a), cy + R * math.sin(outer_a)
+        ix, iy = cx + r * math.cos(inner_a), cy + r * math.sin(inner_a)
+        if i == 0:
+            path.moveTo(ox, oy)
+        else:
+            path.lineTo(ox, oy)
+        path.lineTo(ix, iy)
+    path.closeSubpath()
+    p.drawPath(path)
     p.end()
     return QIcon(px)
 
 
 def make_copy_button_icon():
+    accent = '#60a5fa' if settings.theme == 'dark' else '#4169e1'
     px = QPixmap(16, 16)
     px.fill(Qt.transparent)
     p = QPainter(px)
     p.setRenderHint(QPainter.Antialiasing)
-    p.setPen(QColor('#6b8cff'))
+    p.setPen(QColor(accent))
     p.setBrush(Qt.NoBrush)
     p.drawRoundedRect(5, 3, 7, 8, 1, 1)
     p.drawRoundedRect(3, 5, 7, 8, 1, 1)
@@ -568,12 +609,16 @@ class RowWidget(QWidget):
             ht = self.entry.get('height', '?')
             meta_lbl = QLabel(f'{ts}  ·  {w} × {ht} px')
             meta_lbl.setObjectName('meta')
+            meta_lbl.setVisible(settings.show_metadata)
             v.addWidget(meta_lbl)
         else:
-            preview_raw = self.entry['text'][:180].replace('\n', '  ↵  ').replace('\t', '  →  ')
-            preview_lbl = QLabel(preview_raw)
+            if settings.word_wrap:
+                preview_text = self.entry['text'].replace('\t', '    ')
+            else:
+                preview_text = self.entry['text'][:180].replace('\n', '  ↵  ').replace('\t', '  →  ')
+            preview_lbl = QLabel(preview_text)
             preview_lbl.setObjectName('preview')
-            preview_lbl.setWordWrap(False)
+            preview_lbl.setWordWrap(settings.word_wrap)
             preview_lbl.setMaximumWidth(430)
             font = preview_lbl.font()
             font.setPointSize(settings.font_size)
@@ -590,6 +635,7 @@ class RowWidget(QWidget):
             line_str = f'  ·  {lines} lines' if lines > 1 else ''
             meta_lbl = QLabel(f'{ts}  ·  {chars} chars{line_str}')
             meta_lbl.setObjectName('meta')
+            meta_lbl.setVisible(settings.show_metadata)
             v.addWidget(meta_lbl)
 
         h.addLayout(v, stretch=1)
@@ -605,7 +651,17 @@ class RowWidget(QWidget):
         btn.clicked.connect(lambda: self.copy_requested.emit(self.entry))
         h.addWidget(btn, alignment=Qt.AlignVCenter)
 
-        self.setFixedHeight(ROW_HEIGHT)
+        if settings.word_wrap and self.entry.get('type') != 'image':
+            fm = preview_lbl.fontMetrics()
+            rect = fm.boundingRect(
+                0, 0, 430, 100000,
+                Qt.TextWordWrap | Qt.AlignLeft,
+                preview_text,
+            )
+            row_h = max(ROW_HEIGHT, rect.height() + 32)
+        else:
+            row_h = ROW_HEIGHT
+        self.setFixedHeight(row_h)
 
 
 # ── Confirm Dialog ────────────────────────────────────────────────────────────
@@ -752,11 +808,23 @@ class SettingsDialog(QDialog):
             'Max pinned items',
             self._spin('max_pinned', 1, 50),
         ))
+        bl.addLayout(self._row(
+            'Show item metadata',
+            self._metadata_toggle(),
+        ))
+        bl.addLayout(self._row(
+            'Word wrap text items',
+            self._wordwrap_toggle(),
+        ))
 
         bl.addWidget(self._section_label('LAYOUT'))
         bl.addLayout(self._row(
             'Panel width',
-            self._spin('panel_width', 400, 1400, ' px'),
+            self._spin('panel_width', 25, 60, ' %'),
+        ))
+        bl.addLayout(self._row(
+            'Panel height',
+            self._spin('panel_height', 50, 100, ' %'),
         ))
 
         # Separator
@@ -845,6 +913,62 @@ class SettingsDialog(QDialog):
         row.addWidget(self._dark_btn)
         return container
 
+    def _metadata_toggle(self):
+        container = QWidget()
+        container.setObjectName('root')
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+
+        self._meta_show_btn = QPushButton('Show')
+        self._meta_show_btn.setObjectName('theme_btn')
+        self._meta_show_btn.setCheckable(True)
+        self._meta_show_btn.setChecked(settings.show_metadata)
+        self._meta_show_btn.setFocusPolicy(Qt.NoFocus)
+        self._meta_show_btn.setCursor(Qt.PointingHandCursor)
+
+        self._meta_hide_btn = QPushButton('Hide')
+        self._meta_hide_btn.setObjectName('theme_btn')
+        self._meta_hide_btn.setCheckable(True)
+        self._meta_hide_btn.setChecked(not settings.show_metadata)
+        self._meta_hide_btn.setFocusPolicy(Qt.NoFocus)
+        self._meta_hide_btn.setCursor(Qt.PointingHandCursor)
+
+        self._meta_show_btn.clicked.connect(lambda: self._set_metadata(True))
+        self._meta_hide_btn.clicked.connect(lambda: self._set_metadata(False))
+
+        row.addWidget(self._meta_show_btn)
+        row.addWidget(self._meta_hide_btn)
+        return container
+
+    def _wordwrap_toggle(self):
+        container = QWidget()
+        container.setObjectName('root')
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+
+        self._wrap_on_btn = QPushButton('On')
+        self._wrap_on_btn.setObjectName('theme_btn')
+        self._wrap_on_btn.setCheckable(True)
+        self._wrap_on_btn.setChecked(settings.word_wrap)
+        self._wrap_on_btn.setFocusPolicy(Qt.NoFocus)
+        self._wrap_on_btn.setCursor(Qt.PointingHandCursor)
+
+        self._wrap_off_btn = QPushButton('Off')
+        self._wrap_off_btn.setObjectName('theme_btn')
+        self._wrap_off_btn.setCheckable(True)
+        self._wrap_off_btn.setChecked(not settings.word_wrap)
+        self._wrap_off_btn.setFocusPolicy(Qt.NoFocus)
+        self._wrap_off_btn.setCursor(Qt.PointingHandCursor)
+
+        self._wrap_on_btn.clicked.connect(lambda: self._set_wordwrap(True))
+        self._wrap_off_btn.clicked.connect(lambda: self._set_wordwrap(False))
+
+        row.addWidget(self._wrap_on_btn)
+        row.addWidget(self._wrap_off_btn)
+        return container
+
     # ── Live apply ────────────────────────────────────────────────────────────
     def _set_theme(self, theme):
         self._light_btn.setChecked(theme == 'light')
@@ -852,11 +976,21 @@ class SettingsDialog(QDialog):
         settings._data['theme'] = theme
         self._apply_stylesheet()
 
+    def _set_metadata(self, show):
+        self._meta_show_btn.setChecked(show)
+        self._meta_hide_btn.setChecked(not show)
+        settings._data['show_metadata'] = show
+
+    def _set_wordwrap(self, wrap):
+        self._wrap_on_btn.setChecked(wrap)
+        self._wrap_off_btn.setChecked(not wrap)
+        settings._data['word_wrap'] = wrap
+
     def _on_spin_changed(self, key, value):
         settings._data[key] = value
         if key == 'font_size':
             self._apply_stylesheet()
-        # panel_width, max_items, max_pinned are applied on Apply & Close
+        # panel_width, panel_height, max_items, max_pinned are applied on Apply & Close
         # so the list doesn't jump around while the user is typing
 
     def _apply_stylesheet(self):
@@ -871,10 +1005,8 @@ class SettingsDialog(QDialog):
         settings.save()
         self._apply_stylesheet()
         if self.manager.window:
-            win = self.manager.window
-            win.resize(settings.panel_width, win.height())
             self.manager._position_window()
-            win.refresh()
+            self.manager.window.refresh()
         self.accept()
 
     def _cancel(self):
@@ -893,8 +1025,8 @@ class ClipboardWindow(QMainWindow):
         self.setWindowIcon(make_tray_icon())
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_ShowWithoutActivating, False)
-        self.setMinimumSize(400, 400)
-        self.resize(settings.panel_width, 620)
+        self.setMinimumSize(300, 300)
+        self.resize(400, 600)
         self._status_timer = QTimer(self)
         self._status_timer.setSingleShot(True)
         self._status_timer.timeout.connect(self._reset_status)
@@ -1025,15 +1157,18 @@ class ClipboardWindow(QMainWindow):
         pinned_entries = self.manager.filtered_pinned_entries(q)
         normal_entries = self.manager.filtered_history_entries(q)
 
+        pinned_row_heights = []
         for i, entry in enumerate(pinned_entries):
             row_widget = RowWidget(entry, i, show_index=False)
             row_widget.copy_requested.connect(self._copy)
             row_widget.pin_requested.connect(self._toggle_pin)
             item = QListWidgetItem(self._pinned_list)
             item.setData(Qt.UserRole, entry)
-            item.setSizeHint(QSize(self._pinned_list.width(), ROW_HEIGHT))
+            rh = row_widget.minimumHeight()
+            item.setSizeHint(QSize(self._pinned_list.width(), rh))
             self._pinned_list.addItem(item)
             self._pinned_list.setItemWidget(item, row_widget)
+            pinned_row_heights.append(rh)
 
         for i, entry in enumerate(normal_entries):
             row_widget = RowWidget(entry, i)
@@ -1041,7 +1176,7 @@ class ClipboardWindow(QMainWindow):
             row_widget.pin_requested.connect(self._toggle_pin)
             item = QListWidgetItem(self._list)
             item.setData(Qt.UserRole, entry)
-            item.setSizeHint(QSize(self._list.width(), ROW_HEIGHT))
+            item.setSizeHint(QSize(self._list.width(), row_widget.minimumHeight()))
             self._list.addItem(item)
             self._list.setItemWidget(item, row_widget)
 
@@ -1050,7 +1185,8 @@ class ClipboardWindow(QMainWindow):
         pinned_total = len(self.manager.pinned_entries())
         visible_rows = min(len(pinned_entries), 4)
         self._pinned_meta.setText(f'{pinned_total} / {settings.max_pinned}')
-        self._pinned_list.setMaximumHeight((visible_rows * ROW_HEIGHT) + 4 if visible_rows else 0)
+        pinned_max_h = sum(pinned_row_heights[:4]) + 4 if visible_rows else 0
+        self._pinned_list.setMaximumHeight(pinned_max_h)
         self._pinned_section_widget.setVisible(bool(pinned_total))
 
     def _filter(self, text):
@@ -1237,10 +1373,10 @@ class ClipboardManager(QObject):
         if text == self.last_text:
             return
         self.last_text = text
-        existing  = next((h for h in self.history if h['text'] == text), None)
+        existing  = next((h for h in self.history if h.get('text') == text), None)
         pinned    = bool(existing and existing.get('pinned'))
         pinned_at = existing.get('pinned_at') if existing else None
-        self.history = [h for h in self.history if h['text'] != text]
+        self.history = [h for h in self.history if h.get('text') != text]
         self.history.insert(0, {
             'text':      text,
             'timestamp': datetime.now().isoformat(),
@@ -1397,11 +1533,14 @@ class ClipboardManager(QObject):
         if screen is None:
             return
         available = screen.availableGeometry()
-        width     = settings.panel_width
+        width  = max(300, int(available.width()  * settings.panel_width  / 100))
+        height = max(300, int(available.height() * settings.panel_height / 100))
         x = available.right() - width + 1
         y = available.top()
-        self.window.resize(width, available.height())
-        self.window.setFixedHeight(available.height())
+        self.window.setMinimumSize(0, 0)
+        self.window.setMaximumSize(16777215, 16777215)
+        self.window.resize(width, height)
+        self.window.setFixedSize(width, height)
         self.window.move(x, y)
 
     def _tray_anchor_rect(self):
