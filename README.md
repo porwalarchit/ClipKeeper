@@ -1,6 +1,6 @@
 # ClipKeeper v2
 
-A lightweight clipboard history manager for Linux desktops with a system tray interface. Keeps a searchable history of everything you copy, persists across reboots, and supports pinning important entries.
+A lightweight clipboard history manager for Linux desktops with a system tray interface. Keeps a searchable history of everything you copy — **text and images** — persists across reboots, and supports pinning important entries.
 
 ---
 
@@ -52,10 +52,12 @@ A lightweight clipboard history manager for Linux desktops with a system tray in
 
 ### Panel features
 
-- **Search** — type in the search bar to filter history in real time
+- **Text history** — every text copy is captured and shown with a preview, character count, and timestamp
+- **Image history** — copied images are captured and shown as thumbnails with pixel dimensions; clicking the copy button restores the image to your clipboard
+- **Search** — type in the search bar to filter text entries in real time (image entries are shown when the search bar is empty)
 - **Copy** — click the copy button on any entry to copy it back to clipboard
-- **Pin** — click the pin button to keep an entry at the top (max 10 pinned items)
-- **Settings** — right-click the tray icon → Settings to adjust theme, font size, history limit, and panel width
+- **Pin** — click the pin button to keep an entry at the top (max 10 pinned items); works for both text and images
+- **Settings** — click the ⚙ button to adjust theme, font size, history limit, and panel width
 - **Auto-hide** — the panel closes automatically when it loses focus
 
 ### Tray icon menu
@@ -73,9 +75,10 @@ Right-click the system tray icon for quick access to:
 | Path                                 | Description                                    |
 | ------------------------------------ | ---------------------------------------------- |
 | `~/.config/clipkeeper/history.json`  | Clipboard history (max 100 entries by default) |
+| `~/.config/clipkeeper/images/`       | Copied images stored as PNG files              |
 | `~/.config/clipkeeper/settings.json` | User settings (theme, font size, limits, etc.) |
 
-History is preserved on uninstall. To delete it:
+History and images are preserved on uninstall. To delete everything:
 
 ```bash
 rm -rf ~/.config/clipkeeper

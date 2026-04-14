@@ -9,6 +9,7 @@ import sys
 import json
 import os
 import time
+import hashlib
 from datetime import datetime
 
 from PyQt5.QtWidgets import (
@@ -18,7 +19,8 @@ from PyQt5.QtWidgets import (
     QDialog, QSpinBox, QFrame,
 )
 from PyQt5.QtCore import (
-    Qt, QTimer, QSize, pyqtSignal, QObject, QRect, QPoint, QEvent
+    Qt, QTimer, QSize, pyqtSignal, QObject, QRect, QPoint, QEvent,
+    QByteArray, QBuffer, QIODevice,
 )
 from PyQt5.QtGui import (
     QIcon, QColor, QPixmap, QPainter, QBrush, QCursor, QPen
@@ -28,6 +30,7 @@ from PyQt5.QtGui import (
 CONFIG_DIR    = os.path.expanduser('~/.config/clipkeeper')
 HISTORY_FILE  = os.path.join(CONFIG_DIR, 'history.json')
 SETTINGS_FILE = os.path.join(CONFIG_DIR, 'settings.json')
+IMAGES_DIR    = os.path.join(CONFIG_DIR, 'images')
 ROW_HEIGHT       = 64
 ACTION_BTN_WIDTH = 32
 
@@ -544,27 +547,50 @@ class RowWidget(QWidget):
         v.setSpacing(3)
         v.setContentsMargins(0, 0, 0, 0)
 
-        preview_raw = self.entry['text'][:180].replace('\n', '  ↵  ').replace('\t', '  →  ')
-        preview_lbl = QLabel(preview_raw)
-        preview_lbl.setObjectName('preview')
-        preview_lbl.setWordWrap(False)
-        preview_lbl.setMaximumWidth(430)
-        font = preview_lbl.font()
-        font.setPointSize(settings.font_size)
-        preview_lbl.setFont(font)
-        v.addWidget(preview_lbl)
+        if self.entry.get('type') == 'image':
+            thumb_lbl = QLabel()
+            thumb_lbl.setObjectName('preview')
+            img_path = os.path.join(IMAGES_DIR, self.entry.get('image_file', ''))
+            px = QPixmap(img_path)
+            if not px.isNull():
+                px = px.scaled(160, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                thumb_lbl.setPixmap(px)
+            else:
+                thumb_lbl.setText('[image not found]')
+            v.addWidget(thumb_lbl)
 
-        try:
-            dt = datetime.fromisoformat(self.entry['timestamp'])
-            ts = dt.strftime('%d %b %Y  %H:%M')
-        except Exception:
-            ts = '—'
-        chars = len(self.entry['text'])
-        lines = self.entry['text'].count('\n') + 1
-        line_str = f'  ·  {lines} lines' if lines > 1 else ''
-        meta_lbl = QLabel(f'{ts}  ·  {chars} chars{line_str}')
-        meta_lbl.setObjectName('meta')
-        v.addWidget(meta_lbl)
+            try:
+                dt = datetime.fromisoformat(self.entry['timestamp'])
+                ts = dt.strftime('%d %b %Y  %H:%M')
+            except Exception:
+                ts = '—'
+            w = self.entry.get('width', '?')
+            ht = self.entry.get('height', '?')
+            meta_lbl = QLabel(f'{ts}  ·  {w} × {ht} px')
+            meta_lbl.setObjectName('meta')
+            v.addWidget(meta_lbl)
+        else:
+            preview_raw = self.entry['text'][:180].replace('\n', '  ↵  ').replace('\t', '  →  ')
+            preview_lbl = QLabel(preview_raw)
+            preview_lbl.setObjectName('preview')
+            preview_lbl.setWordWrap(False)
+            preview_lbl.setMaximumWidth(430)
+            font = preview_lbl.font()
+            font.setPointSize(settings.font_size)
+            preview_lbl.setFont(font)
+            v.addWidget(preview_lbl)
+
+            try:
+                dt = datetime.fromisoformat(self.entry['timestamp'])
+                ts = dt.strftime('%d %b %Y  %H:%M')
+            except Exception:
+                ts = '—'
+            chars = len(self.entry['text'])
+            lines = self.entry['text'].count('\n') + 1
+            line_str = f'  ·  {lines} lines' if lines > 1 else ''
+            meta_lbl = QLabel(f'{ts}  ·  {chars} chars{line_str}')
+            meta_lbl.setObjectName('meta')
+            v.addWidget(meta_lbl)
 
         h.addLayout(v, stretch=1)
 
@@ -1032,7 +1058,12 @@ class ClipboardWindow(QMainWindow):
 
     # ── Copy ──────────────────────────────────────────────────────────────────
     def _copy(self, entry):
-        if not entry or not entry.get('text'):
+        if not entry:
+            return
+        if entry.get('type') == 'image':
+            self._copy_image(entry)
+            return
+        if not entry.get('text'):
             return
         self._hide_guard_until = time.monotonic() + 0.35
         self.manager.suspend_capture(entry['text'])
@@ -1047,6 +1078,19 @@ class ClipboardWindow(QMainWindow):
             'font-family: "Courier New", monospace; font-size: 10px;'
         )
         self._status_timer.start(2500)
+
+    def _copy_image(self, entry):
+        img_path = os.path.join(IMAGES_DIR, entry.get('image_file', ''))
+        pixmap = QPixmap(img_path)
+        if pixmap.isNull():
+            self._show_status('Image file not found', success=False)
+            return
+        self._hide_guard_until = time.monotonic() + 0.35
+        self.manager.suspend_capture_image(entry.get('image_hash', ''))
+        QApplication.clipboard().setPixmap(pixmap)
+        w = entry.get('width', '?')
+        ht = entry.get('height', '?')
+        self._show_status(f'✓  Copied image  ({w} × {ht} px)', success=True)
 
     def _reset_status(self):
         self._status.setText('↵  click or double-click to copy  ·  history persists across reboots')
@@ -1104,8 +1148,10 @@ class ClipboardManager(QObject):
         self.last_text   = None
         self.window      = None
         self.quitting    = False
-        self._capture_guard_text  = None
-        self._capture_guard_until = 0.0
+        self._capture_guard_text       = None
+        self._capture_guard_image_hash = None
+        self._capture_guard_until      = 0.0
+        self._last_image_hash          = None
 
         os.makedirs(CONFIG_DIR, exist_ok=True)
         self._clipboard = app.clipboard()
@@ -1127,14 +1173,31 @@ class ClipboardManager(QObject):
                     raw = json.load(f)
                     history = []
                     for entry in raw:
-                        if not isinstance(entry, dict) or not entry.get('text'):
+                        if not isinstance(entry, dict):
                             continue
-                        history.append({
-                            'text':      entry['text'],
-                            'timestamp': entry.get('timestamp', datetime.now().isoformat()),
-                            'pinned':    bool(entry.get('pinned', False)),
-                            'pinned_at': entry.get('pinned_at'),
-                        })
+                        if entry.get('type') == 'image':
+                            img_path = os.path.join(IMAGES_DIR, entry.get('image_file', ''))
+                            if not os.path.exists(img_path):
+                                continue  # skip entries whose file was deleted
+                            history.append({
+                                'type':       'image',
+                                'image_file': entry['image_file'],
+                                'image_hash': entry.get('image_hash', ''),
+                                'timestamp':  entry.get('timestamp', datetime.now().isoformat()),
+                                'pinned':     bool(entry.get('pinned', False)),
+                                'pinned_at':  entry.get('pinned_at'),
+                                'width':      entry.get('width', 0),
+                                'height':     entry.get('height', 0),
+                            })
+                        else:
+                            if not entry.get('text'):
+                                continue
+                            history.append({
+                                'text':      entry['text'],
+                                'timestamp': entry.get('timestamp', datetime.now().isoformat()),
+                                'pinned':    bool(entry.get('pinned', False)),
+                                'pinned_at': entry.get('pinned_at'),
+                            })
                     return history[:settings.max_items]
         except Exception:
             pass
@@ -1150,9 +1213,17 @@ class ClipboardManager(QObject):
 
     # ── Clipboard capture ─────────────────────────────────────────────────────
     def _on_clipboard_change(self):
+        img = self._clipboard.image()
+        if not img.isNull():
+            self._ingest_image(QPixmap.fromImage(img))
+            return
         self._ingest(self._clipboard.text())
 
     def _poll(self):
+        img = self._clipboard.image()
+        if not img.isNull():
+            self._ingest_image(QPixmap.fromImage(img))
+            return
         self._ingest(self._clipboard.text())
 
     def _ingest(self, text):
@@ -1185,6 +1256,56 @@ class ClipboardManager(QObject):
         self._capture_guard_text  = text
         self._capture_guard_until = time.monotonic() + duration
 
+    def suspend_capture_image(self, img_hash, duration=0.6):
+        self._capture_guard_image_hash = img_hash
+        self._capture_guard_until      = time.monotonic() + duration
+
+    def _ingest_image(self, pixmap):
+        if pixmap.isNull():
+            return
+        # Serialise to PNG bytes for hashing
+        ba  = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.WriteOnly)
+        pixmap.save(buf, 'PNG')
+        buf.close()
+        img_hash = hashlib.md5(bytes(ba)).hexdigest()[:16]
+
+        if self._last_image_hash == img_hash:
+            return
+        if (
+            self._capture_guard_image_hash == img_hash
+            and time.monotonic() < self._capture_guard_until
+        ):
+            return
+
+        self._last_image_hash = img_hash
+
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+        ts_str   = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:21]
+        filename = f'img_{ts_str}_{img_hash}.png'
+        pixmap.save(os.path.join(IMAGES_DIR, filename), 'PNG')
+
+        # Remove any previous entry with the same hash (dedup)
+        self.history = [
+            h for h in self.history
+            if not (h.get('type') == 'image' and h.get('image_hash') == img_hash)
+        ]
+        self.history.insert(0, {
+            'type':      'image',
+            'image_file': filename,
+            'image_hash': img_hash,
+            'timestamp': datetime.now().isoformat(),
+            'pinned':    False,
+            'pinned_at': None,
+            'width':     pixmap.width(),
+            'height':    pixmap.height(),
+        })
+        self.history = self.history[:settings.max_items]
+        self._save()
+        if self.window and self.window.isVisible():
+            self.window.refresh()
+
     def pinned_entries(self):
         return sorted(
             [e for e in self.history if e.get('pinned')],
@@ -1196,16 +1317,30 @@ class ClipboardManager(QObject):
         entries = self.pinned_entries()
         if not query:
             return entries
-        return [e for e in entries if query in e['text'].lower()]
+        # Image entries have no text to search — exclude them when a query is active
+        return [e for e in entries
+                if e.get('type') != 'image' and query in e.get('text', '').lower()]
 
     def filtered_history_entries(self, query):
         entries = [e for e in self.history if not e.get('pinned')]
         if not query:
             return entries
-        return [e for e in entries if query in e['text'].lower()]
+        return [e for e in entries
+                if e.get('type') != 'image' and query in e.get('text', '').lower()]
 
     def toggle_pin(self, entry):
-        target = next((item for item in self.history if item['text'] == entry.get('text')), None)
+        if entry.get('type') == 'image':
+            target = next(
+                (item for item in self.history
+                 if item.get('type') == 'image'
+                 and item.get('image_hash') == entry.get('image_hash')),
+                None,
+            )
+        else:
+            target = next(
+                (item for item in self.history if item.get('text') == entry.get('text')),
+                None,
+            )
         if target is None:
             return False, 'Entry not found'
         if target.get('pinned'):
@@ -1303,10 +1438,22 @@ class ClipboardManager(QObject):
             self.window._modal_open = False
             self.window._hide_guard_until = time.monotonic() + 0.5
         if dlg._accepted:
+            self._delete_all_image_files()
             self.history = []
             self._save()
             if self.window:
                 self.window.refresh()
+
+    def _delete_all_image_files(self):
+        """Remove every PNG in IMAGES_DIR that belongs to the current history."""
+        for entry in self.history:
+            if entry.get('type') == 'image' and entry.get('image_file'):
+                path = os.path.join(IMAGES_DIR, entry['image_file'])
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except Exception:
+                    pass
 
     def quit_app(self):
         self.quitting = True
