@@ -119,7 +119,13 @@ settings = Settings()
 
 # ── Stylesheet ────────────────────────────────────────────────────────────────
 def build_stylesheet(theme: str, font_size: int) -> str:
-    """Return a complete QSS string for the given theme and preview font size."""
+    """Return a complete QSS string for the given theme and font size.
+    All UI text sizes scale proportionally from font_size via five tiers."""
+    # Scaled sizes (all in pt) derived from the single font_size setting
+    fs_sm   = max(7,  round(font_size * 0.75))  # meta, idx, section meta, status
+    fs_md   = max(8,  round(font_size * 0.85))  # clear/quit buttons, section title, count
+    fs_icon = max(14, round(font_size * 1.6))   # settings gear icon
+
     if theme == 'light':
         c = {
             # Warm parchment base — comfortable, non-glaring
@@ -227,7 +233,7 @@ QWidget#header {{
 }}
 QLabel#title {{
     color: {c['accent']};
-    font-size: 14px;
+    font-size: 9pt;
     font-weight: bold;
     font-family: 'Courier New', monospace;
     letter-spacing: 2px;
@@ -235,7 +241,7 @@ QLabel#title {{
 }}
 QLabel#count {{
     color: {c['text_dim']};
-    font-size: 10px;
+    font-size: {fs_md}pt;
     font-family: 'Courier New', monospace;
 }}
 
@@ -250,7 +256,7 @@ QLineEdit#search {{
     border: 1px solid {c['border']};
     border-radius: 6px;
     padding: 7px 12px;
-    font-size: 12px;
+    font-size: 9pt;
     font-family: 'Courier New', monospace;
     selection-background-color: {c['select_bg']};
 }}
@@ -335,7 +341,7 @@ QPushButton#clear_btn {{
     border: 1px solid {c['clear_bdr']};
     border-radius: 5px;
     padding: 6px 14px;
-    font-size: 10px;
+    font-size: {fs_md}pt;
     font-family: 'Courier New', monospace;
 }}
 QPushButton#clear_btn:hover {{
@@ -348,7 +354,7 @@ QPushButton#quit_btn {{
     border: 1px solid {c['quit_bdr']};
     border-radius: 5px;
     padding: 6px 14px;
-    font-size: 10px;
+    font-size: {fs_md}pt;
     font-family: 'Courier New', monospace;
 }}
 QPushButton#quit_btn:hover {{
@@ -362,7 +368,7 @@ QPushButton#settings_btn {{
     border: 1px solid {c['copy_btn_bdr']};
     border-radius: 5px;
     padding: 4px 10px;
-    font-size: 20px;
+    font-size: {fs_icon}pt;
     font-family: 'Courier New', monospace;
 }}
 QPushButton#settings_btn:hover {{
@@ -374,7 +380,7 @@ QPushButton#settings_btn:hover {{
 QLabel#status {{
     background-color: {c['status_bg']};
     color: {c['status_color']};
-    font-size: 10px;
+    font-size: {fs_sm}pt;
     font-family: 'Courier New', monospace;
     padding: 5px 12px;
     border-top: 1px solid {c['status_bdr']};
@@ -383,7 +389,7 @@ QLabel#status {{
 /* Row labels */
 QLabel#idx {{
     color: {c['idx_color']};
-    font-size: 9px;
+    font-size: {fs_sm}pt;
     font-family: 'Courier New', monospace;
     min-width: 26px;
     padding-left: 4px;
@@ -395,7 +401,7 @@ QLabel#preview {{
 }}
 QLabel#meta {{
     color: {c['meta']};
-    font-size: 9px;
+    font-size: {fs_sm}pt;
     font-family: 'Courier New', monospace;
 }}
 
@@ -406,14 +412,14 @@ QWidget#pinned_section {{
 }}
 QLabel#section_title {{
     color: {c['section_title']};
-    font-size: 10px;
+    font-size: {fs_md}pt;
     font-weight: bold;
     font-family: 'Courier New', monospace;
     letter-spacing: 1px;
 }}
 QLabel#section_meta {{
     color: {c['section_meta']};
-    font-size: 9px;
+    font-size: {fs_sm}pt;
     font-family: 'Courier New', monospace;
 }}
 
@@ -423,12 +429,12 @@ QDialog {{
 }}
 QLabel#settings_label {{
     color: {c['settings_lbl']};
-    font-size: 12px;
+    font-size: 9pt;
     font-family: 'Courier New', monospace;
 }}
 QLabel#settings_section {{
     color: {c['accent']};
-    font-size: 10px;
+    font-size: 8pt;
     font-weight: bold;
     font-family: 'Courier New', monospace;
     letter-spacing: 1px;
@@ -440,7 +446,7 @@ QSpinBox {{
     border-radius: 4px;
     padding: 4px 8px;
     font-family: 'Courier New', monospace;
-    font-size: 12px;
+    font-size: 9pt;
     min-width: 80px;
 }}
 QSpinBox::up-button, QSpinBox::down-button {{
@@ -463,7 +469,7 @@ QPushButton#theme_btn {{
     border: 1px solid {c['copy_btn_bdr']};
     border-radius: 4px;
     padding: 6px 20px;
-    font-size: 11px;
+    font-size: 9pt;
     font-family: 'Courier New', monospace;
     min-width: 70px;
 }}
@@ -482,7 +488,7 @@ QPushButton#primary_btn {{
     border: 1px solid {c['accent']};
     border-radius: 5px;
     padding: 6px 14px;
-    font-size: 10px;
+    font-size: 9pt;
     font-family: 'Courier New', monospace;
 }}
 QPushButton#primary_btn:hover {{
@@ -569,7 +575,7 @@ class RowWidget(QWidget):
 
     def _build(self, idx):
         h = QHBoxLayout(self)
-        h.setContentsMargins(8, 8, 8, 8)
+        h.setContentsMargins(8, 6, 8, 6)
         h.setSpacing(6)
 
         pin_btn = QPushButton()
@@ -587,6 +593,7 @@ class RowWidget(QWidget):
         v = QVBoxLayout()
         v.setSpacing(3)
         v.setContentsMargins(0, 0, 0, 0)
+        v.addStretch(1)
 
         if self.entry.get('type') == 'image':
             thumb_lbl = QLabel()
@@ -619,7 +626,6 @@ class RowWidget(QWidget):
             preview_lbl = QLabel(preview_text)
             preview_lbl.setObjectName('preview')
             preview_lbl.setWordWrap(settings.word_wrap)
-            preview_lbl.setMaximumWidth(430)
             font = preview_lbl.font()
             font.setPointSize(settings.font_size)
             preview_lbl.setFont(font)
@@ -638,6 +644,7 @@ class RowWidget(QWidget):
             meta_lbl.setVisible(settings.show_metadata)
             v.addWidget(meta_lbl)
 
+        v.addStretch(1)
         h.addLayout(v, stretch=1)
 
         btn = QPushButton()
@@ -653,8 +660,9 @@ class RowWidget(QWidget):
 
         if settings.word_wrap and self.entry.get('type') != 'image':
             fm = preview_lbl.fontMetrics()
+            wrap_w = max(200, self.width() - 2 * ACTION_BTN_WIDTH - 3 * 6)
             rect = fm.boundingRect(
-                0, 0, 430, 100000,
+                0, 0, wrap_w, 100000,
                 Qt.TextWordWrap | Qt.AlignLeft,
                 preview_text,
             )
@@ -797,7 +805,7 @@ class SettingsDialog(QDialog):
 
         bl.addWidget(self._section_label('CONTENT'))
         bl.addLayout(self._row(
-            'Font size of copied items',
+            'Font size (scales all UI text)',
             self._spin('font_size', 8, 24, ' pt'),
         ))
         bl.addLayout(self._row(
@@ -1383,7 +1391,14 @@ class ClipboardManager(QObject):
             'pinned':    pinned,
             'pinned_at': pinned_at,
         })
+        dropped = self.history[settings.max_items:]
         self.history = self.history[:settings.max_items]
+        for entry in dropped:
+            if entry.get('type') == 'image' and entry.get('image_file'):
+                try:
+                    os.remove(os.path.join(IMAGES_DIR, entry['image_file']))
+                except OSError:
+                    pass
         self._save()
         if self.window and self.window.isVisible():
             self.window.refresh()
@@ -1437,7 +1452,14 @@ class ClipboardManager(QObject):
             'width':     pixmap.width(),
             'height':    pixmap.height(),
         })
+        dropped = self.history[settings.max_items:]
         self.history = self.history[:settings.max_items]
+        for entry in dropped:
+            if entry.get('type') == 'image' and entry.get('image_file'):
+                try:
+                    os.remove(os.path.join(IMAGES_DIR, entry['image_file']))
+                except OSError:
+                    pass
         self._save()
         if self.window and self.window.isVisible():
             self.window.refresh()
